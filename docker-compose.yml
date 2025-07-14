@@ -1,0 +1,56 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgis/postgis:15-3.4-alpine
+    ports:
+      - 127.0.0.1:5432:5432
+    volumes:
+      - /apps/postgres/data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=iWcuUThpbYdmoGRdDFw3UTww4MnU7unb
+      - POSTGRES_USER=admin
+      - POSTGRES_DB=osm
+    healthcheck:
+      # ensure that osm2psql is started after postgres started and initialzied successfully
+      test: ["CMD-SHELL", "pg_isready -h localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 15
+  
+  osm2pgsql:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    image: iboates/osm2pgsql:latest
+    environment:
+      PGPASSWORD: iWcuUThpbYdmoGRdDFw3UTww4MnU7unb
+    command: osm2pgsql -U admin -d osm -P 5432 -H postgres /osm_files/Unterfranken_25-01-2025.osm.pbf
+    volumes:
+      - /root/mapdata:/osm_files
+      
+  custom-osrm-service:
+    image: custom-osrm
+    stdin_open: true # docker run -i
+    tty: true        # docker run -t
+    ports:
+        - 127.0.0.1:5000:5000
+    volumes:
+      - /root/osrm_data/:/data
+    command: osrm-routed --algorithm mld /data/Unterfranken_25-01-2025.osrm --verbosity WARNING
+
+  distance-estimator:
+    image: distance-estimation
+    network_mode: host
+    ports:
+      - 127.0.0.1:8080:8080
+    depends_on:
+      custom-osrm-service:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      osm2pgsql:
+        condition: service_completed_successfully
+    volumes:
+      - /apps/distance-estimator/preprocessing_files:/preprocessing_files
+    
