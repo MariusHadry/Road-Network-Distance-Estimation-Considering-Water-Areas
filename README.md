@@ -1,7 +1,7 @@
 # Distance Estimation
 
 
-This is the companion repository for "Analysis of Distance Estimation Approaches while Crossing Water Areas". 
+This is the companion repository for "Road Network Distance Estimation Considering Water Areas". 
 The repository is structured as follows:
 
 * `custom-osrm` is our modified version of [OSRM](https://project-osrm.org/) which allows measuring the execution time for single queries
