@@ -11,9 +11,9 @@ import java.util.HashMap;
 
 public class OverheadGraphEstimation extends DirectLineEstimation {
 
-    private KDTree<GeoLocation> locationKDTree;
-    private HashMap<GeoLocation, HashMap<GeoLocation, Double>> circuityLookupMap;
-    private HashMap<GeoLocation, Double> circuityAverageLookupMap;
+    private final KDTree<GeoLocation> locationKDTree;
+    private final HashMap<GeoLocation, HashMap<GeoLocation, Double>> circuityLookupMap;
+    private final HashMap<GeoLocation, Double> circuityAverageLookupMap;
     private final int N_RANDOM_POINTS;
 
     public OverheadGraphEstimation(KDTree<GeoLocation> locationKDTree,
@@ -29,13 +29,6 @@ public class OverheadGraphEstimation extends DirectLineEstimation {
 
     @Override
     public DistanceEstimate estimateDistance(GeoLocation start, GeoLocation dest) {
-        // ensure same order of start dest
-        if (start.compareTo(dest) < 0) {
-            var tmp = start;
-            start = dest;
-            dest = tmp;
-        }
-
         GeoLocation closestPointStart = this.locationKDTree.nearest(new double[]{start.getLat(), start.getLon()});
         GeoLocation closestPointDest = this.locationKDTree.nearest(new double[]{dest.getLat(), dest.getLon()});
 

@@ -1,7 +1,7 @@
 package de.uniwuerzburg.distanceestimation.estimation;
 
 import de.uniwuerzburg.distanceestimation.estimation.clients.OsrmClient;
-import de.uniwuerzburg.distanceestimation.estimation.clients.PolylineDecoder;
+import de.uniwuerzburg.distanceestimation.models.osrm.PolylineDecoder;
 import de.uniwuerzburg.distanceestimation.models.Factory;
 import de.uniwuerzburg.distanceestimation.models.DistanceEstimate;
 import de.uniwuerzburg.distanceestimation.models.GeoLocation;
@@ -22,12 +22,6 @@ public class OsrmEstimation implements DistanceEstimation {
     @Override
     public DistanceEstimate estimateDistance(GeoLocation start, GeoLocation dest) {
         if (start.equals(dest)) return DistanceEstimate.zero;
-        
-        if (start.compareTo(dest) < 0) {
-            var tmp = start;
-            start = dest;
-            dest = tmp;
-        }
 
         double distanceMeters = client.route(new OsrmRouteRequest(new OsrmLocation(start), new OsrmLocation(dest))).routes()[0].distance();
         return DistanceEstimate.byM(distanceMeters);

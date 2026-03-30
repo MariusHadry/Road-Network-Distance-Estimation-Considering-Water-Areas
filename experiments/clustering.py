@@ -100,7 +100,7 @@ if __name__ == '__main__':
 
     for approach in [DistanceEstimationApproach.HAVERSINE,
                      DistanceEstimationApproach.OSRM,
-                     DistanceEstimationApproach.WATER_GRAPH_CIRCUITY,
+                     DistanceEstimationApproach.BRIDGE_SPLIT_NO_REC,
                      DistanceEstimationApproach.OVERHEAD_GRAPH_1024]:
         tmp = ClusterRequest.get_cluster(random_points, k=3, estimation_approach=approach)
 

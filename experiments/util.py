@@ -6,6 +6,7 @@ import time
 import math
 import requests
 
+HERE_API_KEY = ''
 EARTH_RADIUS = 6_371_000 # in meters
 DISTANCE_ESTIMATION_SERVICE_ADDRESS = "127.0.0.1:8080"
 
@@ -40,6 +41,14 @@ class Location(object):
         """
         return lower_left.lat <= self.lat <= upper_right.lat and lower_left.lon <= self.lon <= upper_right.lon
 
+    def __eq__(self, other):
+        if not isinstance(other, Location):
+            return False
+        return self.lat == other.lat and self.lon == other.lon
+
+    def __hash__(self):
+        return hash((self.lat, self.lon))
+
 
 class ExperimentConfiguration:
     def __init__(self, start_location: Location, dest_location: Location, n_repetitions: int = 1):
@@ -53,6 +62,10 @@ class DistanceEstimationApproach(Enum):
     WATER_GRAPH = "WATER_GRAPH"
     BRIDGE_REC = "BRIDGE_REC"
     BRIDGE_NO_REC = "BRIDGE_NO_REC"
+    HYBRID_BRIDGE_SPLIT_HAVERSINE = "HYBRID_BRIDGE_SPLIT_HAVERSINE"
+    HYBRID_BRIDGE_SPLIT_OHG = "HYBRID_BRIDGE_SPLIT_OHG"
+    HYBRID_WATER_GRAPH_HAVERSINE = "HYBRID_WATER_GRAPH_HAVERSINE"
+    HYBRID_WATER_GRAPH_OHG = "HYBRID_WATER_GRAPH_OHG"
     BRIDGE_SPLIT_REC = "BRIDGE_SPLIT_REC"
     BRIDGE_SPLIT_NO_REC = "BRIDGE_SPLIT_NO_REC"
     OVERHEAD_GRAPH_128 = "OVERHEAD_GRAPH_128"
@@ -60,13 +73,14 @@ class DistanceEstimationApproach(Enum):
     OVERHEAD_GRAPH_512 = "OVERHEAD_GRAPH_512"
     OVERHEAD_GRAPH_1024 = "OVERHEAD_GRAPH_1024"
     OSRM = "OSRM"
-    # VALHALLA = "VALHALLA"
 
     @staticmethod
     def get_estimation_approaches():
         return [DistanceEstimationApproach.WATER_GRAPH, DistanceEstimationApproach.WATER_GRAPH_CIRCUITY,
                 DistanceEstimationApproach.HAVERSINE, DistanceEstimationApproach.BRIDGE_REC,
                 DistanceEstimationApproach.BRIDGE_NO_REC, DistanceEstimationApproach.BRIDGE_SPLIT_REC,
+                DistanceEstimationApproach.HYBRID_BRIDGE_SPLIT_HAVERSINE, DistanceEstimationApproach.HYBRID_BRIDGE_SPLIT_OHG,
+                DistanceEstimationApproach.HYBRID_WATER_GRAPH_HAVERSINE, DistanceEstimationApproach.HYBRID_WATER_GRAPH_OHG,
                 DistanceEstimationApproach.BRIDGE_SPLIT_NO_REC]
 
     @staticmethod
@@ -97,6 +111,34 @@ class Valhalla:
 
         return Valhalla.BASE_URL + 'json=' + json.dumps(params)
 
+class HERE:
+    BASE_URL: str = 'https://router.hereapi.com/v8/'
+
+    @staticmethod
+    def get_distance_response(start_location: Location, dest_location: Location):
+        api_url = HERE._build_url_distance(start_location, dest_location)
+        response = requests.get(api_url)
+        return response.json()
+
+    @staticmethod
+    def get_distance_only(start_location: Location, dest_location: Location):
+        api_url = HERE._build_url_distance(start_location, dest_location)
+        response = requests.get(api_url).json()
+        if 'routes' in response:
+            return response['routes'][0]['sections'][0]['summary']['length']
+        return -1
+
+    @staticmethod
+    def _build_url_distance(start_location: Location, dest_location: Location) -> str:
+        params = {
+            'transportMode': 'car',
+            'return': 'summary',
+            'departureTime': 'any',
+            'apikey': HERE_API_KEY,
+            'origin': f'{start_location.lat},{start_location.lon}',
+            'destination': f'{dest_location.lat},{dest_location.lon}'
+        }
+        return HERE.BASE_URL + "routes?" + urlencode(params)
 
 class OSRM:
     BASE_URL: str = 'http://127.0.0.1:5000/'
@@ -200,6 +242,12 @@ class DistanceEstimation:
         return response.json()
 
     @staticmethod
+    def get_water_areas_analyzed(start_location: Location, dest_location: Location):
+        api_url = DistanceEstimation._build_url_water_areas_analyzed(start_location, dest_location)
+        response = requests.get(api_url)
+        return response.json()
+
+    @staticmethod
     def _build_url_cross_water_area(start_location: Location, dest_location: Location) -> str:
         params = {
             'startLat': start_location.lat,
@@ -208,6 +256,16 @@ class DistanceEstimation:
             'destLon': dest_location.lon,
         }
         return DistanceEstimation.BASE_URL + "crossesWater" + "?" + urlencode(params)
+
+    @staticmethod
+    def _build_url_water_areas_analyzed(start_location: Location, dest_location: Location) -> str:
+        params = {
+            'startLat': start_location.lat,
+            'startLon': start_location.lon,
+            'destLat': dest_location.lat,
+            'destLon': dest_location.lon,
+        }
+        return DistanceEstimation.BASE_URL + "waterAreasAnalyzed" + "?" + urlencode(params)
 
     @staticmethod
     def _build_url(start_location: Location, dest_location: Location,
@@ -265,11 +323,27 @@ def haversine(location_one, location_two):
 
 if __name__ == '__main__':
     # This snippet can be used to analyze the found paths of the different approaches!
-    start = Location.from_string("Location[50.395066,10.28045]")
-    dest = Location.from_string("Location[50.390213988,10.263055874]")
 
-    print("Bridge no rec:\n---")
-    response = DistanceEstimation.get_path(start, dest, DistanceEstimationApproach.BRIDGE_NO_REC)
+    # road layout (water area intersected and bridge used)
+    # start = Location.from_string("Location[49.705829,9.235198]")
+    # dest = Location.from_string("Location[49.703418,9.236397]")
+
+    # No water crossing, long distance -> road layout issue
+    # dest = Location.from_string("Location[49.540746,9.589452]")
+    # start = Location.from_string("Location[49.479768,9.642328]")
+
+    # false water crossing of bridge route
+    # dest = Location.from_string("Location[49.521706,10.000346]")
+    # start = Location.from_string("Location[49.516614,10.012478]")
+
+    # Location[49.699016,10.14132]	Location[49.697135,10.141423]
+    start = Location.from_string("Location[49.699016, 10.14132]")
+    dest = Location.from_string("Location[49.697135, 10.141423]")
+
+
+    response = DistanceEstimation.get_path(start, dest, DistanceEstimationApproach.BRIDGE_SPLIT_NO_REC)
+    dist_bs = response['distanceMeters']
+    print(f"Bridge Split no rec (dist={dist_bs}):\n---")
     geo_json = estimation_path_to_geoJSON(response['path'])
     print(json.dumps(geo_json))
 
@@ -282,6 +356,7 @@ if __name__ == '__main__':
     print("\nOSRM:\n---")
     response = DistanceEstimation.get_path(start, dest, DistanceEstimationApproach.OSRM)
     dist_osrm = response['distanceMeters']
+    print(dist_osrm)
     geo_json = estimation_path_to_geoJSON(response['path'])
     print(json.dumps(geo_json))
 

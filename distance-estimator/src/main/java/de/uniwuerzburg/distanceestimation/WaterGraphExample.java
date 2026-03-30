@@ -117,7 +117,8 @@ public class WaterGraphExample {
     private static ArrayList<Long> getTimes(GeoLocation start, GeoLocation dest, int repetitions) {
         WaterGraphEstimation wge = new WaterGraphEstimation(waterGraphPreprocessing.getWaterGraphs(),
                 waterGraphPreprocessing.getSimpleSplitWaterAreas(), waterGraphPreprocessing.getWaterGraphEdges(),
-                new EuclideanDistance(),true, waterGraphPreprocessing.getNewBridges(), waterGraphPreprocessing.getWaterAreaTree());
+                new EuclideanDistance(),true, waterGraphPreprocessing.getNewBridges(), waterGraphPreprocessing.getWaterAreaTree(),
+                waterGraphPreprocessing.getSpatialIndicesWaterGraphs());
 
         ArrayList<Long> measuredTimes = new ArrayList<>();
 

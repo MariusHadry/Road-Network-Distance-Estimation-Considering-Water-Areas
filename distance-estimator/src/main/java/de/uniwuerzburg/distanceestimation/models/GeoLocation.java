@@ -5,12 +5,15 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Point;
 
-import java.util.Objects;
-
-public final class GeoLocation extends Coordinate {
+public class GeoLocation extends Coordinate {
     private final double lat;
     private final double lon;
 
+    private boolean initialized_hash = false;
+    private int precalculatedHash;
+    private boolean initialized_equals = false;
+    private long latBits;
+    private long lonBits;
 
     @JsonCreator
     public GeoLocation(double lat, double lon) {
@@ -77,18 +80,32 @@ public final class GeoLocation extends Coordinate {
         return lon;
     }
 
+    private void initializeEquals(GeoLocation location) {
+        if (!location.initialized_equals){
+            location.latBits = Double.doubleToLongBits(location.lat);
+            location.lonBits = Double.doubleToLongBits(location.lon);
+            location.initialized_equals = true;
+        }
+    }
+
     @Override
     public boolean equals(Object obj) {
-        if (obj == this) return true;
-        if (obj == null || obj.getClass() != this.getClass()) return false;
-        var that = (GeoLocation) obj;
-        return Double.doubleToLongBits(this.lat) == Double.doubleToLongBits(that.lat) &&
-                Double.doubleToLongBits(this.lon) == Double.doubleToLongBits(that.lon);
+        if (!(obj instanceof GeoLocation otherWaterArea)) return false;
+
+        initializeEquals(this);
+        initializeEquals(otherWaterArea);
+        return this.latBits == otherWaterArea.latBits && this.lonBits == otherWaterArea.lonBits;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(lat, lon);
+        if (!initialized_hash){
+            initializeEquals(this);
+            this.precalculatedHash =  31 * Long.hashCode(this.latBits) + Long.hashCode(this.lonBits);
+            initialized_hash = true;
+        }
+
+        return this.precalculatedHash;
     }
 
     @Override

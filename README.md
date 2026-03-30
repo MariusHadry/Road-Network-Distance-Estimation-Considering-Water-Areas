@@ -1,7 +1,7 @@
 # Distance Estimation
 
 
-This is the companion repository for "Road Network Distance Estimation Considering Water Areas". 
+This is the companion repository for "Analysis of Distance Estimation Approaches while Crossing Water Areas". 
 The repository is structured as follows:
 
 * `custom-osrm` is our modified version of [OSRM](https://project-osrm.org/) which allows measuring the execution time for single queries
@@ -23,10 +23,11 @@ The repository is structured as follows:
         * `docker run -t -v "${PWD}:/data" custom-osrm-newest osrm-customize /data/Unterfranken_25-01-2025.osrm || echo "osrm-customize failed`
         * `docker run -t -i -p 5000:5000 -v "${PWD}:/data" custom-osrm-newest osrm-routed --algorithm mld /data/Unterfranken_25-01-2025.osrm`
 3. Prepare Distance Estimation Service
-    * [optional] change the database password in the `docker-compose.yml` and change the password in `DatabaseAccess` class accordingly.
-    * Build the distance-estimation container: Execute `docker build --no-cache --tag 'distance-estimation' . ` in the `distance-estimator` directory
+   * copy `.env.example` name it `.env` and fill out all the variables in the file.
+   * change the database password in the `docker-compose.yml` and change the password in `DatabaseAccess` class accordingly.
+   * Build the distance-estimation container: Execute `docker build --no-cache --tag 'distance-estimation' . ` in the `distance-estimator` directory
 4. Start the containers
-    * [optional] check the volume mappings in the docker `docker-compose.yml` and adjust them to your liking. Make sure to only change the local path. The mapping follows the syntax `<local>:<in container>`. If you want to use the same data as we did for the Overhead Graph, you can use the preprocessing files located in `distance-estimator/preprocessing_files/`.
+    * check the volume mappings in the docker `docker-compose.yml` and adjust them. Make sure to only change the local path. The mapping follows the syntax `<local>:<in container>`. If you want to use the same data as we did for the Overhead Graph, you can use the preprocessing files located in `distance-estimator/preprocessing_files/`.
     * Run `docker compose up -d` in the project root directory
     * **Note**: initially starting the distance-estimation-service requires some time due to the preprocessing taking place!
 
@@ -47,7 +48,7 @@ The repository is structured as follows:
 
 ## Additional files
 
-Additional files can be found on [Zenodo](https://zenodo.org/records/14882138?token=eyJhbGciOiJIUzUxMiJ9.eyJpZCI6IjlmMTQzMDg3LTc2MDAtNDA4Yi1iOTNiLTBjZDk0NDU5MDNlYiIsImRhdGEiOnt9LCJyYW5kb20iOiI5OGJkMzFmMDk4OGEzNzY2MjU0ZDY1MDA2MmJiNWEzZCJ9.Kcn9bVHAG8S42cKsGoOX1i9eEgLrVrTVATKiwFTkKJ4pzTs_CNvN_6PJfAHY1P9IxlpqF62gs0nUfPhcfqGnjw).
+Additional files can be found on [Zenodo](https://doi.org/10.5281/zenodo.19329502).
 Here, you can find the raw results and the OpenStreetMap information used for the experiments.
 
 

@@ -47,6 +47,20 @@ public class DistanceEstimationService {
             case BRIDGE_SPLIT_NO_REC ->
                     BridgeRouteEstimation.buildApproach(preprocessingService.getBridgeRoutePreprocessing(),
                             new EuclideanDistance(),false, true);
+            case HYBRID_BRIDGE_SPLIT_HAVERSINE ->
+                    new HybridBridgeRouteEstimation(preprocessingService.getBridgeRoutePreprocessing(),
+                            new GreatCircleDistance(), DistanceEstimation.CIRCUITY_FACTOR_GERMANY,
+                            DistanceEstimation.CIRCUITY_FACTOR_GERMANY, ApproachType.HYBRID_BRIDGE_SPLIT_HAVERSINE);
+            case HYBRID_BRIDGE_SPLIT_OHG ->
+                new HybridBridgeRouteEstimation(preprocessingService.getBridgeRoutePreprocessing(),
+                        getOverheadGraphEstimationByNPoints(1024), DistanceEstimation.CIRCUITY_FACTOR_GERMANY,
+                        1.0, ApproachType.HYBRID_BRIDGE_SPLIT_OHG);
+            case HYBRID_WATER_GRAPH_HAVERSINE ->
+                new HybridWaterGraphEstimation(preprocessingService.getWaterGraphPreprocessing(),
+                        new GreatCircleDistance(), DistanceEstimation.CIRCUITY_FACTOR_GERMANY, ApproachType.HYBRID_WATER_GRAPH_HAVERSINE);
+            case HYBRID_WATER_GRAPH_OHG ->
+                    new HybridWaterGraphEstimation(preprocessingService.getWaterGraphPreprocessing(),
+                            getOverheadGraphEstimationByNPoints(1024), 1.0, ApproachType.HYBRID_WATER_GRAPH_OHG);
             case OVERHEAD_GRAPH_128 -> getOverheadGraphEstimationByNPoints(128);
             case OVERHEAD_GRAPH_256 -> getOverheadGraphEstimationByNPoints(256);
             case OVERHEAD_GRAPH_512 -> getOverheadGraphEstimationByNPoints(512);

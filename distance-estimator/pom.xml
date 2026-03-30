@@ -25,14 +25,6 @@
         </repository>
     </repositories>
 
-    <properties>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-
-        <!-- properties for SonarQube analysis -->
-        <sonar.projectName>Distance-Estimation - ${project.artifactId}</sonar.projectName>
-        <main.class>de.uniwuerzburg.distanceestimation.Main</main.class>
-        <sonar.language>java</sonar.language>
-    </properties>
 
     <dependencyManagement>
         <dependencies>
@@ -121,6 +113,13 @@
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
             <version>2.5.0</version>
+        </dependency>
+        <!-- Source: https://mvnrepository.com/artifact/io.github.cdimascio/java-dotenv -->
+        <dependency>
+            <groupId>io.github.cdimascio</groupId>
+            <artifactId>java-dotenv</artifactId>
+            <version>5.2.2</version>
+            <scope>compile</scope>
         </dependency>
 
         <!-- https://mvnrepository.com/artifact/com.google.code.gson/gson -->

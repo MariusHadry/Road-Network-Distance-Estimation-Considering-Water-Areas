@@ -15,6 +15,7 @@ import org.jgrapht.graph.SimpleWeightedGraph;
 import org.locationtech.jts.geom.*;
 import org.locationtech.jts.geom.util.GeometryFixer;
 import org.locationtech.jts.geom.util.LineStringExtracter;
+import org.locationtech.jts.index.strtree.STRtree;
 import org.locationtech.jts.io.geojson.GeoJsonWriter;
 import org.locationtech.jts.operation.valid.IsValidOp;
 import org.locationtech.jts.simplify.TopologyPreservingSimplifier;
@@ -34,6 +35,7 @@ public class WaterGraphPreprocessing {
     private final Map<WaterArea, SimpleWeightedGraph<GeoLocation, Edge>> waterGraphs;
     private final Map<WaterArea, Set<LineString>> waterGraphEdges;
     private final Map<WaterArea, Set<GeoLocation>> newBridges;
+    private final Map<WaterArea, STRtree> spatialIndicesWaterGraphs;
 
     private final Map<LinearRing, Set<GeoLocation>> tempShortcutsTaken;
     private final boolean circuityInGraph;
@@ -51,6 +53,7 @@ public class WaterGraphPreprocessing {
         this.tempShortcutsTaken = new HashMap<>();
         this.circuityInGraph = circuityInGraph;
         this.onlyImportantWaterAreas = true;
+        this.spatialIndicesWaterGraphs = new HashMap<>();
     }
 
     public void preprocessing() {
@@ -189,7 +192,6 @@ public class WaterGraphPreprocessing {
                 WaterArea newWater = new WaterArea(name, Factory.FACTORY.createMultiPolygon(polygons));
                 simpleSplitWaterAreas.add(newWater);
 
-
                 // Save new nearest to bridge Nodes
                 if (!tempShortcutsTaken.get(ring).isEmpty()) {
                     Set<GeoLocation> newNearestGeoLocationToBridgesSet = new HashSet<>();
@@ -219,11 +221,17 @@ public class WaterGraphPreprocessing {
                     lines.add(line);
                 }
                 waterGraphEdges.put(newWater, lines);
-            }
 
+                STRtree index = new STRtree();
+                for (LineString l : lines) {
+                    index.insert(l.getEnvelopeInternal(), l);
+                }
+                index.build();
+                spatialIndicesWaterGraphs.put(newWater, index);
+            }
         }
 
-        // Create Graphs & R-Tree
+        // Create Graphs & R-Tree & STRTree
         waterAreaTree = RTree.create();
         for (WaterArea w : simpleSplitWaterAreas) {
             SimpleWeightedGraph<GeoLocation, Edge> graph = new SimpleWeightedGraph<>(Edge.class);
@@ -286,24 +294,6 @@ public class WaterGraphPreprocessing {
         return bridges;
     }
 
-    public Set<WaterArea> getWaterAreas() {
-        return waterAreas;
-    }
-
-    public Map<WaterArea, Set<Bridge>> getWaterAreasWithBridgesMap() {
-        return waterAreasWithBridgesMap;
-    }
-
-
-    public Map<WaterArea, Geometry> getSimpleWaterAreasMap() {
-        return simpleWaterAreasMap;
-    }
-
-
-    public Map<WaterArea, Geometry> getSimpleWaterAreasWithBridgesMap() {
-        return simpleWaterAreasWithBridgesMap;
-    }
-
     public Map<WaterArea, SimpleWeightedGraph<GeoLocation, Edge>> getWaterGraphs() {
         return waterGraphs;
     }
@@ -322,6 +312,10 @@ public class WaterGraphPreprocessing {
 
     public RTree<WaterArea, com.github.davidmoten.rtree.geometry.Geometry> getWaterAreaTree() {
         return waterAreaTree;
+    }
+
+    public Map<WaterArea, STRtree> getSpatialIndicesWaterGraphs() {
+        return spatialIndicesWaterGraphs;
     }
 
     private void analyzeWaterAreas(){

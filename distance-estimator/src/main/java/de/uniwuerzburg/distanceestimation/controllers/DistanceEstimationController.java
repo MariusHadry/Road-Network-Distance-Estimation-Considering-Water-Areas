@@ -2,7 +2,7 @@ package de.uniwuerzburg.distanceestimation.controllers;
 
 import de.uniwuerzburg.distanceestimation.controllers.models.*;
 import de.uniwuerzburg.distanceestimation.estimation.ApproachType;
-import de.uniwuerzburg.distanceestimation.estimation.DistanceEstimation;
+import de.uniwuerzburg.distanceestimation.estimation.DirectLineEstimation;
 import de.uniwuerzburg.distanceestimation.models.GeoLocation;
 import de.uniwuerzburg.distanceestimation.services.DistanceEstimationService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -60,5 +60,22 @@ public class DistanceEstimationController {
         var result = distanceEstimationService.cluster(request.approachType(), request.k(), request.locations());
         final long end = System.nanoTime();
         return new ClusterResponse(result, request.k(), request.approachType(), end - start);
+    }
+
+    @GetMapping("/waterAreasAnalyzed")
+    public @ResponseBody WaterAreasAnalyzedResponse waterAreasAnalyzed(@RequestParam double startLat, @RequestParam double startLon,
+                                                 @RequestParam double destLat, @RequestParam double destLon) {
+        DirectLineEstimation wgc = (DirectLineEstimation) distanceEstimationService.getDistanceEstimationByType(ApproachType.WATER_GRAPH_CIRCUITY);
+        DirectLineEstimation bre = (DirectLineEstimation) distanceEstimationService.getDistanceEstimationByType(ApproachType.BRIDGE_NO_REC);
+        DirectLineEstimation bres = (DirectLineEstimation) distanceEstimationService.getDistanceEstimationByType(ApproachType.BRIDGE_SPLIT_NO_REC);
+
+        return new WaterAreasAnalyzedResponse(
+                startLat, startLon, destLat, destLon,
+                wgc.getNumberOfAnalyzedWaterAreas(new GeoLocation(startLat, startLon), new GeoLocation(destLat, destLon)),
+                wgc.getNumberOfIntersectedWaterAreas(new GeoLocation(startLat, startLon), new GeoLocation(destLat, destLon)),
+                bre.getNumberOfAnalyzedWaterAreas(new GeoLocation(startLat, startLon), new GeoLocation(destLat, destLon)),
+                bre.getNumberOfIntersectedWaterAreas(new GeoLocation(startLat, startLon), new GeoLocation(destLat, destLon)),
+                bres.getNumberOfAnalyzedWaterAreas(new GeoLocation(startLat, startLon), new GeoLocation(destLat, destLon)),
+                bres.getNumberOfIntersectedWaterAreas(new GeoLocation(startLat, startLon), new GeoLocation(destLat, destLon)));
     }
 }

@@ -1,16 +1,22 @@
 package de.uniwuerzburg.distanceestimation.estimation;
 
 import com.github.davidmoten.rtree.RTree;
-import de.uniwuerzburg.distanceestimation.models.*;
+import de.uniwuerzburg.distanceestimation.models.DirectLine;
+import de.uniwuerzburg.distanceestimation.models.DistanceEstimate;
+import de.uniwuerzburg.distanceestimation.models.Factory;
+import de.uniwuerzburg.distanceestimation.models.GeoLocation;
 import de.uniwuerzburg.distanceestimation.models.mapInfo.Bridge;
 import de.uniwuerzburg.distanceestimation.models.mapInfo.WaterArea;
 import de.uniwuerzburg.distanceestimation.preprocessing.BridgeRoutePreprocessing;
 import de.uniwuerzburg.distanceestimation.util.Debug;
+import org.apache.commons.lang3.tuple.Pair;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.LineString;
+import org.locationtech.jts.io.geojson.GeoJsonWriter;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class BridgeRouteEstimation extends DirectLineEstimation {
     private final boolean recalculated;
@@ -19,9 +25,9 @@ public class BridgeRouteEstimation extends DirectLineEstimation {
     private List<Bridge> lastBridgesUsed;
 
     private BridgeRouteEstimation(Map<WaterArea, Set<Bridge>> waterAreasWithBridgesMap,
-                                 Map<WaterArea, Geometry> simpleWaterAreasMap,
-                                 RTree<WaterArea, com.github.davidmoten.rtree.geometry.Geometry> waterAreaTree,
-                                 AirlineDistance metric, boolean recalculated, boolean splitWaterAreas) {
+                                  Map<WaterArea, Geometry> simpleWaterAreasMap,
+                                  RTree<WaterArea, com.github.davidmoten.rtree.geometry.Geometry> waterAreaTree,
+                                  AirlineDistance metric, boolean recalculated, boolean splitWaterAreas) {
         super(simpleWaterAreasMap, new ArrayList<>(waterAreasWithBridgesMap.keySet()), waterAreaTree, metric);
         this.waterAreasWithBridgesMap = waterAreasWithBridgesMap;
         this.recalculated = recalculated;
@@ -55,37 +61,65 @@ public class BridgeRouteEstimation extends DirectLineEstimation {
         lastBridgesUsed = new ArrayList<>();
         lastDistanceCircuity = DistanceEstimate.zero;
 
-        if (start.compareTo(dest) < 0) {
-            var tmp = start;
-            start = dest;
-            dest = tmp;
-        }
-
         var res = calculateRecursive(start, dest, DistanceEstimate.zero, new HashSet<>(),
                 recalculated, 1, null, null);
         Debug.message("---");
         return res;
     }
 
+    private List<Pair<LineString, WaterArea>> removeDoubleCrossings(List<Pair<LineString, WaterArea>> intersections) {
+        /**
+         * Removes intersections if the same water area is intersected multiple times and no actual crossing of the
+         * water area is required.
+         *
+         * @param intersections A list of Pair objects containing the intersection geometry and the associated WaterArea, sorted by distance.
+         * @return A filtered list containing only valid crossings.
+         */
+
+        if (intersections == null || intersections.isEmpty()) return new ArrayList<>();
+
+        List<Pair<LineString, WaterArea>> result = new ArrayList<>();
+        int n = intersections.size();
+        int i = 0;
+
+        while (i < n) {
+            int j = i;
+            long currentId = intersections.get(i).getRight().getInstanceId();
+
+            // Find the boundary of the current group of identical IDs
+            while (j < n && intersections.get(j).getRight().getInstanceId() == currentId) {
+                j++;
+            }
+
+            // If odd, keep one -> we need to cross the river once
+            // If even, keep none -> we do not need to cross the river
+            int groupSize = j - i;
+            if (groupSize % 2 != 0) {
+                result.add(intersections.get(i));
+            }
+
+            i = j; // Move pointer to the start of the next ID group
+        }
+
+        return result;
+    }
+
     private DistanceEstimate calculateRecursive(GeoLocation start, GeoLocation dest, DistanceEstimate savedDistance,
                                                 Set<Bridge> previousBridges, boolean recalculated, int step,
                                                 //These parameters are only used in not-recalculated mode, else they get overwritten each time
-                                                Map<LineString, WaterArea> intersectionWaterAreasMap,
-                                                List<Map.Entry<LineString, Double>> intersectionsSortedByDistanceList) {
-        Debug.message("---Recursion Step " + step + "---");
+                                                List<Pair<LineString, WaterArea>> intersections,
+                                                List<Pair<LineString, WaterArea>> intersectionsSortedByDistanceList) {
+//        Debug.message("---Recursion Step " + step + "---");
 
         /* This approach has two modes, recalculated and not-recalculated:
         Recalculated: The Intersections are recalculated in each step based on a line from the last found bridge to the dest
         Not-Recalculated: The intersections are always from initial start to dest and nearest/skipped ones gets removed
          */
-        if (recalculated || intersectionWaterAreasMap == null) {
+        if (recalculated || intersections == null) {
             DirectLine directLine = new DirectLine(start, dest);
-            Debug.startDebugTimer();
-            intersectionWaterAreasMap = getIntersections(directLine, true);
-            Debug.stopDebugTimer("Get all intersections of Start-Dest-Line with Water Areas");
-            Debug.startDebugTimer();
-            intersectionsSortedByDistanceList = sortIntersectionsByDistance(directLine, intersectionWaterAreasMap, step);
-            Debug.stopDebugTimer("Get Distance of Start to Intersections in sorted List");
+            intersections = getIntersections(directLine, true);
+            intersectionsSortedByDistanceList = sortIntersectionsByDistance(directLine, intersections);
+            intersectionsSortedByDistanceList = removeDoubleCrossings(intersectionsSortedByDistanceList);
         }
 
         // no Water Areas remaining
@@ -94,15 +128,39 @@ public class BridgeRouteEstimation extends DirectLineEstimation {
             return calculateDistanceWithMetric(start, dest, savedDistance);
         }
 
+        if (Debug.DEBUG){
+            GeoJsonWriter geoJsonWriter = new GeoJsonWriter();
+            geoJsonWriter.setEncodeCRS(false);
+
+            List<Geometry> lst = new ArrayList<>();
+
+            for (Pair<LineString, WaterArea> pair : intersectionsSortedByDistanceList) {
+                lst.add(pair.getRight().getGeom());
+            }
+
+            String polyFeatures = lst.stream()
+                    .map(geom -> {
+                        String jsonGeom = geoJsonWriter.write(geom);
+                        return "{ \"type\": \"Feature\", \"properties\": {}, \"geometry\": " + jsonGeom + " }";
+                    })
+                    .collect(Collectors.joining(", "));
+
+            DirectLine directLine = new DirectLine(start, dest);
+            String lineFeature = "{ \"type\": \"Feature\", \"properties\": { \"name\": \"Direct Line\" }, \"geometry\": "
+                    + geoJsonWriter.write(directLine.getLine()) + " }";
+
+            String all_waterAreas = "{ \"type\": \"FeatureCollection\", \"features\": [" + polyFeatures + ", " + lineFeature + " ] }";
+
+            System.out.println(all_waterAreas);
+        }
 
         // Find nearest Bridge of nearest Intersection
-        Debug.startDebugTimer();
         int nextIndexWhenNotRecalculating = 0;
         Bridge nearestBridge = null;
         boolean bridgeFound = false;
-        for (Map.Entry<LineString, Double> entry : intersectionsSortedByDistanceList) {
-            LineString i = entry.getKey();
-            WaterArea w = intersectionWaterAreasMap.get(i);
+        for (Pair<LineString,WaterArea> entry : intersectionsSortedByDistanceList) {
+            LineString i = entry.getLeft();
+            WaterArea w = entry.getRight();
             Set<Bridge> bridges = waterAreasWithBridgesMap.get(w);
             double minDistance = Double.MAX_VALUE;
             for (Bridge b : bridges) {
@@ -116,12 +174,10 @@ public class BridgeRouteEstimation extends DirectLineEstimation {
             // should not lead to previous bridges -> infinity loop
             if (nearestBridge == null || !previousBridges.contains(nearestBridge)) {
                 bridgeFound = true;
-                Debug.message("Intersection: " + i.getCoordinate().y + " " + i.getCoordinate().x +
-                        " with Water Area " + w.getName());
+//                Debug.message("Intersection: " + i.getCoordinate().y + " " + i.getCoordinate().x + " with Water Area " + w.getName());
                 break;
             }
         }
-        Debug.stopDebugTimer("Find nearest Bridge of nearest (not skipped) Intersection");
 
         if (nearestBridge == null || !bridgeFound) {
             return calculateDistanceWithMetric(start, dest, savedDistance);
@@ -133,29 +189,20 @@ public class BridgeRouteEstimation extends DirectLineEstimation {
         }
 
         // Calculate Distance to Bridge with Metric
-        Debug.startDebugTimer();
         var anyBridgePoint = new GeoLocation(nearestBridge.geom().getCoordinate());    //Any Point should be okay
         savedDistance = calculateDistanceWithMetric(start, anyBridgePoint, savedDistance);
 
         lastBridgesUsed.add(nearestBridge);
         previousBridges.add(nearestBridge);
 
-        Debug.stopDebugTimer("Calculate Distance to Bridge with Metric");
-
         // Recursive call with Bridge as new start
         return calculateRecursive(anyBridgePoint, dest, savedDistance, previousBridges,
-                recalculated, step + 1, intersectionWaterAreasMap, intersectionsSortedByDistanceList);
+                recalculated, step + 1, intersections, intersectionsSortedByDistanceList);
     }
 
     public boolean crossesWater(GeoLocation start, GeoLocation dest){
-        if (start.compareTo(dest) < 0) {
-            var tmp = start;
-            start = dest;
-            dest = tmp;
-        }
-
         DirectLine directLine = new DirectLine(start, dest);
-        Map<LineString, WaterArea> intersectionWaterAreasMap = getIntersections(directLine, true);
+        List<Pair<LineString, WaterArea>> intersectionWaterAreasMap = getIntersections(directLine, true);
 
         return !intersectionWaterAreasMap.isEmpty();
     }
@@ -206,9 +253,5 @@ public class BridgeRouteEstimation extends DirectLineEstimation {
     @Override
     public int hashCode() {
         return Objects.hash(super.hashCode(), recalculated, waterAreasWithBridgesMap, lastBridgesUsed);
-    }
-
-    public List<Bridge> getLastBridgesUsed() {
-        return lastBridgesUsed;
     }
 }

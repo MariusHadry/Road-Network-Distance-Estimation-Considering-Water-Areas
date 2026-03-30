@@ -277,14 +277,6 @@ public class BridgeRoutePreprocessing {
         return simpleWaterAreasMap;
     }
 
-    public Set<WaterArea> getWaterAreas() {
-        return waterAreas;
-    }
-
-    public Set<WaterArea> getSplitWaterAreas() {
-        return splitWaterAreas;
-    }
-
     public Map<WaterArea, Set<Bridge>> getSplitWaterAreasWithBridges() {
         return splitWaterAreasWithBridges;
     }

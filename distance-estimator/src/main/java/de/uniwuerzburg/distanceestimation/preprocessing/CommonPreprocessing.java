@@ -1,6 +1,6 @@
 package de.uniwuerzburg.distanceestimation.preprocessing;
 
-import de.uniwuerzburg.distanceestimation.estimation.AirlineDistance;
+import de.uniwuerzburg.distanceestimation.estimation.GreatCircleDistance;
 import de.uniwuerzburg.distanceestimation.models.Factory;
 import de.uniwuerzburg.distanceestimation.models.GeoLocation;
 import de.uniwuerzburg.distanceestimation.models.mapInfo.Bridge;
@@ -140,7 +140,7 @@ public class CommonPreprocessing {
         double minDistance = Double.MAX_VALUE;
         for (Coordinate c1 : poly1Points) {
             for (Coordinate c2 : poly2Points) {
-                double distance = haversineDistance(c1, c2);
+                double distance = GreatCircleDistance.getDistanceMeters(c1, c2);
                 minDistance = Math.min(minDistance, distance);
             }
         }
@@ -149,21 +149,5 @@ public class CommonPreprocessing {
 
     private static List<Coordinate> getPolygonCoordinates(Geometry polygon) {
         return new ArrayList<>(Arrays.asList(polygon.getCoordinates()));
-    }
-
-    protected static double haversineDistance(Coordinate c1, Coordinate c2) {
-        double lat1 = Math.toRadians(c1.y);
-        double lon1 = Math.toRadians(c1.x);
-        double lat2 = Math.toRadians(c2.y);
-        double lon2 = Math.toRadians(c2.x);
-
-        double dLat = lat2 - lat1;
-        double dLon = lon2 - lon1;
-
-        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-        return AirlineDistance.EARTH_RADIUS * c * 1_000; // Distance in meters
     }
 }

@@ -2,7 +2,7 @@ package de.uniwuerzburg.distanceestimation.models;
 
 import java.util.Objects;
 
-public final class DistanceEstimate {
+public class DistanceEstimate {
     private final double meters;
 
     private DistanceEstimate(double meters) {

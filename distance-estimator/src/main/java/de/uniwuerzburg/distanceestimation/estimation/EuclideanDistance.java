@@ -7,13 +7,6 @@ public class EuclideanDistance extends AirlineDistance {
 
     @Override
     public DistanceEstimate estimateDistance(GeoLocation start, GeoLocation dest) {
-        // not required here, but done for consistency reasons!
-        if (start.compareTo(dest) < 0) {
-            var tmp = start;
-            start = dest;
-            dest = tmp;
-        }
-
         double deltaLonX = Math.toRadians(dest.getLon() - start.getLon());
         double deltaLatY = Math.toRadians(dest.getLat() - start.getLat());
 
@@ -31,6 +24,4 @@ public class EuclideanDistance extends AirlineDistance {
     public DistanceEstimation copyApproach() {
         return new EuclideanDistance();
     }
-
-
 }

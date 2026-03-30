@@ -1,5 +1,6 @@
 package de.uniwuerzburg.distanceestimation.estimation;
 
+import org.apache.commons.lang3.tuple.Pair;
 import com.github.davidmoten.rtree.Entry;
 import com.github.davidmoten.rtree.RTree;
 import com.github.davidmoten.rtree.geometry.Geometries;
@@ -11,10 +12,7 @@ import de.uniwuerzburg.distanceestimation.models.GeoLocation;
 import de.uniwuerzburg.distanceestimation.models.mapInfo.WaterArea;
 import de.uniwuerzburg.distanceestimation.util.Debug;
 import de.uniwuerzburg.distanceestimation.util.DurationTimer;
-import org.locationtech.jts.geom.Envelope;
-import org.locationtech.jts.geom.Geometry;
-import org.locationtech.jts.geom.LineString;
-import org.locationtech.jts.geom.Point;
+import org.locationtech.jts.geom.*;
 import org.locationtech.jts.geom.util.LineStringExtracter;
 import org.locationtech.jts.geom.util.PointExtracter;
 import org.locationtech.jts.io.geojson.GeoJsonWriter;
@@ -22,6 +20,9 @@ import org.locationtech.jts.io.geojson.GeoJsonWriter;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
 
 public abstract class DirectLineEstimation implements DistanceEstimation {
 
@@ -41,20 +42,90 @@ public abstract class DirectLineEstimation implements DistanceEstimation {
         lastDistanceCircuity = DistanceEstimate.zero;
     }
 
-    protected boolean doesIntersect(DirectLine directLine, WaterArea waterArea, boolean useSimpleAreaMap){
+
+    private List<WaterArea> queryIndexSegmented(DirectLine directLine, int numSegments) {
         LineString line = directLine.getLine();
-        Geometry g;
-        if (useSimpleAreaMap){
-            g = simpleWaterAreasMap.get(waterArea);
-        } else {
-            g = waterArea.getGeom();
+        Coordinate start = line.getCoordinateN(0);
+        Coordinate end = line.getCoordinateN(1);
+        Set<WaterArea> candidates = new HashSet<>();
+
+        for (int i = 0; i < numSegments; i++) {
+            double t1 = (double) i / numSegments;
+            double t2 = (double) (i + 1) / numSegments;
+
+            double x1 = start.x + (end.x - start.x) * t1;
+            double y1 = start.y + (end.y - start.y) * t1;
+            double x2 = start.x + (end.x - start.x) * t2;
+            double y2 = start.y + (end.y - start.y) * t2;
+
+            com.github.davidmoten.rtree.geometry.Line searchLine = Geometries.line(
+                    Math.min(x1, x2), Math.min(y1, y2),
+                    Math.max(x1, x2), Math.max(y1, y2)
+            );
+
+            // das toBlocking single ist wohl sehr ineffizient hier!
+            List<WaterArea> segmentResult = waterAreaTree.search(searchLine)
+                    .map(Entry::value).toList().toBlocking().single();
+            candidates.addAll(segmentResult);
         }
-        return line.intersects(g);
+
+        return new ArrayList<>(candidates);
     }
 
-    protected Map<LineString, WaterArea> getIntersections(DirectLine directLine, boolean useSimpleAreaMap) {
+
+    protected List<Pair<LineString, WaterArea>> getIntersections(DirectLine directLine, boolean useSimpleAreaMap) {
         LineString line = directLine.getLine();
-        Map<LineString, WaterArea> intersectionsWaterAreas = new ConcurrentHashMap<>();
+        Envelope lineEnvelope = line.getEnvelopeInternal();
+
+        double area = lineEnvelope.getWidth() * lineEnvelope.getHeight();
+        double lineLengthSq = lineEnvelope.getWidth() * lineEnvelope.getWidth() + lineEnvelope.getHeight() * lineEnvelope.getHeight();
+
+        List<WaterArea> interestingWaterAreas = waterAreas;
+        if (waterAreaTree != null) {
+            if (GreatCircleDistance.getDistanceMeters(directLine) > 20_000 && area > lineLengthSq * 0.2) {
+                interestingWaterAreas = queryIndexSegmented(directLine, (int) (GreatCircleDistance.getDistanceMeters(directLine) / 5000) + 1);
+            } else {
+                com.github.davidmoten.rtree.geometry.Line searchLine = Geometries.line(
+                        lineEnvelope.getMinX(), lineEnvelope.getMinY(),
+                        lineEnvelope.getMaxX(), lineEnvelope.getMaxY()
+                );
+                interestingWaterAreas = waterAreaTree.search(searchLine)
+                        .map(Entry::value).toList().toBlocking().single();
+            }
+        }
+
+        var stream = interestingWaterAreas.parallelStream();
+        if (interestingWaterAreas.size() >= 5) {
+            stream = interestingWaterAreas.parallelStream();
+        }
+
+        List<Pair<LineString, WaterArea>> intersections = stream
+                .<Pair<LineString, WaterArea>>mapMulti((w, consumer) -> {
+                    Geometry targetGeom = useSimpleAreaMap ? simpleWaterAreasMap.get(w) : w.getGeom();
+
+                    // Bounding box check
+                    if (!lineEnvelope.intersects(w.getGeom().getEnvelopeInternal())) return;
+
+                    // Fast check with more accuracy than bounding box
+                    if (!w.getPreparedGeometry().intersects(line)) return;
+
+                    // actual intersection determination
+                    Geometry intersection = line.intersection(targetGeom);
+
+                    List<LineString> lines = LineStringExtracter.getLines(intersection);
+                    if (!lines.isEmpty()) {
+                        consumer.accept(Pair.of(lines.get(0), w));
+                        consumer.accept(Pair.of(lines.get(lines.size() - 1), w));
+                    }
+                })
+                .collect(Collectors.toList());
+
+        return intersections;
+    }
+
+    public int getNumberOfAnalyzedWaterAreas(GeoLocation start, GeoLocation dest){
+        DirectLine directLine = new DirectLine(start, dest);
+        LineString line = directLine.getLine();
 
         List<WaterArea> interestingWaterAreas = waterAreas;
         if (waterAreaTree != null) {
@@ -66,132 +137,45 @@ public abstract class DirectLineEstimation implements DistanceEstimation {
                     .stream().map(Entry::value).toList();
         }
 
-        interestingWaterAreas.stream().parallel().forEach(w -> {
-            Geometry simple;
-            if (useSimpleAreaMap) {
-                simple = simpleWaterAreasMap.get(w);
-            } else {
-                simple = w.getGeom();
-            }
-            DurationTimer debug2 = new DurationTimer();
-            if (Debug.DEBUG) {
-                debug2.start();
-            }
-
-            // early return if there is no intersection
-            boolean intersects = line.intersects(simple);
-            if (!intersects) return;
-
-            Geometry intersection = line.intersection(simple);
-
-            if (Debug.DEBUG) {
-                debug2.stop();
-                long time = debug2.getDuration();
-                Debug.message("simple.getNumPoints() = " + simple.getNumPoints());
-                GeoJsonWriter geoJsonWriter = new GeoJsonWriter();
-                geoJsonWriter.setEncodeCRS(false);
-                Debug.message(geoJsonWriter.write(simple));
-                Debug.message("- time for calculating intersection " + w.getName() + " " + intersection.getCoordinate() +
-                        ": " + time + " ns, " + time / 1000000 + " ms.");
-            }
-
-            // only use first and last intersection with water area
-            List<LineString> lines = LineStringExtracter.getLines(intersection);
-            intersectionsWaterAreas.put(lines.get(0), w);
-            intersectionsWaterAreas.put(lines.get(lines.size() - 1), w);
-        });
-        return intersectionsWaterAreas;
+        return interestingWaterAreas.size();
     }
 
-    protected Map<Point, WaterArea> getLineIntersections(DirectLine directLine) {
-        LineString line = directLine.getLine();
-        Map<Point, WaterArea> intersectionsWaterLines = new ConcurrentHashMap<>();
-
-        List<WaterArea> interestingWaterLines = waterAreas;
-        if (waterAreaTree != null) {
-            Envelope lineEnvelope = line.getEnvelopeInternal();
-            Rectangle searchBounds = Geometries.rectangleGeographic(
-                    lineEnvelope.getMinX(), lineEnvelope.getMinY(),
-                    lineEnvelope.getMaxX(), lineEnvelope.getMaxY());
-            interestingWaterLines = waterAreaTree.search(searchBounds).toList().toBlocking().single()
-                    .stream().map(Entry::value).toList();
-        }
-
-        interestingWaterLines.stream().parallel().forEach(w -> {
-            Geometry simple;
-            simple = w.getGeom();
-            DurationTimer debug2 = new DurationTimer();
-            if (Debug.DEBUG) {
-                debug2.start();
-            }
-
-            // early return if there is no intersection
-            boolean intersects = line.intersects(simple);
-            if (!intersects) return;
-
-            Geometry intersection = line.intersection(simple);
-//            if (intersection.isEmpty()){
-//                return;
-//            }
-
-            if (Debug.DEBUG) {
-                debug2.stop();
-                long time = debug2.getDuration();
-                Debug.message("simple.getNumPoints() = " + simple.getNumPoints());
-                GeoJsonWriter geoJsonWriter = new GeoJsonWriter();
-                geoJsonWriter.setEncodeCRS(false);
-                Debug.message(geoJsonWriter.write(simple));
-                Debug.message("- time for calculating intersection " + w.getName() + " " + intersection.getCoordinate() +
-                        ": " + time + " ns, " + time / 1000000 + " ms.");
-            }
-
-            // only use first and last intersection with water area
-            List<Point> points = PointExtracter.getPoints(intersection);
-            if (points.size() % 2 != 0) {
-                intersectionsWaterLines.put(points.get(0), w);
-                if (points.size() > 1) {
-                    intersectionsWaterLines.put(points.get(points.size() - 1), w);
-                }
-            }
-
-            if (Debug.DEBUG && !points.isEmpty()){
-                // get waterarea as geojson
-                GeoJsonWriter geoJsonWriter = new GeoJsonWriter();
-                geoJsonWriter.setEncodeCRS(false);
-                Debug.message("Water area that has been intersected: " + geoJsonWriter.write(w.getGeom()));
-                Debug.message(points.size() + " intersections");
-                for (Point p : points) {
-                    Debug.message("\t - " + geoJsonWriter.write(p));
-                }
-            }
-
-        });
-        return intersectionsWaterLines;
+    public int getNumberOfIntersectedWaterAreas(GeoLocation start, GeoLocation dest){
+        DirectLine directLine = new DirectLine(start, dest);
+        List<Pair<LineString, WaterArea>> intersectionWaterAreasMap = getIntersections(directLine, false);
+        Debug.stopDebugTimer("Get all intersections of Start-Dest-Line with Water Areas");
+        Debug.startDebugTimer();
+        List<Pair<LineString, WaterArea>> intersectionsSortedByDistanceList = sortIntersectionsByDistance(directLine, intersectionWaterAreasMap);
+        return intersectionsSortedByDistanceList.size();
     }
 
-    protected List<Map.Entry<LineString, Double>> sortIntersectionsByDistance(
-            DirectLine directLine, Map<LineString, WaterArea> intersectionsWaterAreasMap) {
-        return sortIntersectionsByDistance(directLine, intersectionsWaterAreasMap, 1);
-    }
-
-    protected List<Map.Entry<LineString, Double>> sortIntersectionsByDistance(
-            DirectLine directLine, Map<LineString, WaterArea> intersectionsWaterAreasMap, int step) {
+    protected List<Pair<LineString, WaterArea>> sortIntersectionsByDistance(
+            DirectLine directLine, List<Pair<LineString, WaterArea>> intersections) {
         DurationTimer debugTimer = new DurationTimer();
         if (Debug.DEBUG) {
             debugTimer.start();
         }
 
-        Map<LineString, Double> intersectionsWithDistance = new ConcurrentHashMap<>();
         Point start = Factory.coordinateToPoint(directLine.getStart());
-        intersectionsWaterAreasMap.keySet().stream().parallel().forEach(i -> {
-            double distance = start.distance(i.getEndPoint());
-            if (step == 1 || distance > 0.005) {
-                // Only with Bridge-recalc: If intersection is very near, it is likely the same as previous
-                intersectionsWithDistance.put(i, distance);
+
+        // 1) sort by distance to start
+        intersections.sort(
+                Comparator.comparingDouble(
+                        p -> start.distance(p.getLeft().getEndPoint())
+                )
+        );
+
+        // 2) collapse duplicates (old Map behavior)
+        List<Pair<LineString, WaterArea>> filtered = new ArrayList<>();
+
+        Pair<LineString, WaterArea> prev = null;
+        for (Pair<LineString, WaterArea> curr : intersections) {
+            if (prev == null ||
+                    !curr.getLeft().equalsExact(prev.getLeft(), 1e-9)) {
+                filtered.add(curr);
             }
-        });
-        List<Map.Entry<LineString, Double>> intersectionsWithDistanceList = new ArrayList<>(intersectionsWithDistance.entrySet());
-        intersectionsWithDistanceList.sort(Map.Entry.comparingByValue());
+            prev = curr;
+        }
 
         if (Debug.DEBUG) {
             debugTimer.stop();
@@ -199,35 +183,7 @@ public abstract class DirectLineEstimation implements DistanceEstimation {
             Debug.message("- time for sorting intersections: " + time + " ns, " + time / 1000000 + " ms.");
         }
 
-        return intersectionsWithDistanceList;
-    }
-
-    protected List<Map.Entry<Point, Double>> sortPointIntersectionsByDistance(
-            DirectLine directLine, Map<Point, WaterArea> intersectionsWaterAreasMap, int step) {
-        DurationTimer debugTimer = new DurationTimer();
-        if (Debug.DEBUG) {
-            debugTimer.start();
-        }
-
-        Map<Point, Double> intersectionsWithDistance = new ConcurrentHashMap<>();
-        Point start = Factory.coordinateToPoint(directLine.getStart());
-        intersectionsWaterAreasMap.keySet().stream().parallel().forEach(i -> {
-            double distance = start.distance(i);
-            if (step == 1 || distance > 0.005) {
-                // Only with Bridge-recalc: If intersection is very near, it is likely the same as previous
-                intersectionsWithDistance.put(i, distance);
-            }
-        });
-        List<Map.Entry<Point, Double>> intersectionsWithDistanceList = new ArrayList<>(intersectionsWithDistance.entrySet());
-        intersectionsWithDistanceList.sort(Map.Entry.comparingByValue());
-
-        if (Debug.DEBUG) {
-            debugTimer.stop();
-            long time = debugTimer.getDuration();
-            Debug.message("- time for sorting intersections: " + time + " ns, " + time / 1000000 + " ms.");
-        }
-
-        return intersectionsWithDistanceList;
+        return filtered;
     }
 
     protected DistanceEstimate calculateDistanceWithMetric(GeoLocation start, GeoLocation dest, DistanceEstimate savedDistance) {

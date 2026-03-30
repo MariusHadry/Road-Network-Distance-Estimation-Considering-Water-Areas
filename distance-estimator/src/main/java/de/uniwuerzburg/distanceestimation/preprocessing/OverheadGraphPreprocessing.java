@@ -141,19 +141,8 @@ public class OverheadGraphPreprocessing {
     }
 
     private boolean isInLookupMap(GeoLocation start, GeoLocation dest) {
-        // ensure same order of start dest
-        if (start.compareTo(dest) < 0) {
-            var tmp = start;
-            start = dest;
-            dest = tmp;
-        }
-
         // only add entries if they did not exist
-        if (circuityLookupMap.containsKey(start) && circuityLookupMap.get(start).containsKey(dest)) {
-            return true;
-        }
-
-        return false;
+        return circuityLookupMap.containsKey(start) && circuityLookupMap.get(start).containsKey(dest);
     }
 
     private void fillCircuityMinimumLookupMap() {
@@ -170,13 +159,6 @@ public class OverheadGraphPreprocessing {
     }
 
     private void insertIntoCircuityLookupMap(GeoLocation start, GeoLocation dest, Double circuity) {
-        // ensure same order of start dest
-        if (start.compareTo(dest) < 0) {
-            var tmp = start;
-            start = dest;
-            dest = tmp;
-        }
-
         // only add entries if they did not exist
         if (!circuityLookupMap.containsKey(start)) {
             circuityLookupMap.put(start, new HashMap<>());

@@ -1,4 +1,4 @@
-package de.uniwuerzburg.distanceestimation.estimation.clients;
+package de.uniwuerzburg.distanceestimation.models.osrm;
 
 // Source: https://github.com/scoutant/polyline-decoder/blob/master/src/main/java/org/scoutant/polyline/PolylineDecoder.java
 

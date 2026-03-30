@@ -4,15 +4,15 @@ import de.uniwuerzburg.distanceestimation.models.osrm.OsrmNearestRequest;
 import de.uniwuerzburg.distanceestimation.models.osrm.OsrmNearestResponse;
 import de.uniwuerzburg.distanceestimation.models.osrm.OsrmRouteRequest;
 import de.uniwuerzburg.distanceestimation.models.osrm.OsrmRouteResponse;
+import io.github.cdimascio.dotenv.Dotenv;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
 public class OsrmClient {
     private final RestClient restClient;
 
-
     public OsrmClient() {
-        this.restClient = RestClient.create("http://127.0.0.1:5000");
+        this.restClient = RestClient.create(Dotenv.load().get("OSRM_SERVER_URL"));
     }
 
     public OsrmRouteResponse route(OsrmRouteRequest request) {

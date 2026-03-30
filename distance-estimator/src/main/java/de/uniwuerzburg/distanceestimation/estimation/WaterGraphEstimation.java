@@ -1,15 +1,21 @@
 package de.uniwuerzburg.distanceestimation.estimation;
 
 import com.github.davidmoten.rtree.RTree;
-import de.uniwuerzburg.distanceestimation.models.*;
+import de.uniwuerzburg.distanceestimation.models.DirectLine;
+import de.uniwuerzburg.distanceestimation.models.DistanceEstimate;
+import de.uniwuerzburg.distanceestimation.models.Factory;
+import de.uniwuerzburg.distanceestimation.models.GeoLocation;
 import de.uniwuerzburg.distanceestimation.models.mapInfo.Edge;
 import de.uniwuerzburg.distanceestimation.models.mapInfo.WaterArea;
 import de.uniwuerzburg.distanceestimation.preprocessing.WaterGraphPreprocessing;
 import de.uniwuerzburg.distanceestimation.util.Debug;
+import org.apache.commons.lang3.tuple.Pair;
 import org.jgrapht.GraphPath;
 import org.jgrapht.alg.shortestpath.BidirectionalDijkstraShortestPath;
 import org.jgrapht.graph.SimpleWeightedGraph;
 import org.locationtech.jts.geom.*;
+import org.locationtech.jts.index.strtree.GeometryItemDistance;
+import org.locationtech.jts.index.strtree.STRtree;
 import org.locationtech.jts.io.geojson.GeoJsonWriter;
 
 import java.util.*;
@@ -20,18 +26,21 @@ public class WaterGraphEstimation extends DirectLineEstimation {
     private final Map<WaterArea, SimpleWeightedGraph<GeoLocation, Edge>> waterGraphs;
     private GraphPath<GeoLocation, Edge> lastGraphPath;
     private final Map<WaterArea, Set<LineString>> waterGraphEdges;
+    private final Map<WaterArea, STRtree> spatialIndicesWaterGraphs;
     private final boolean circuity;
     private final Map<WaterArea, Set<GeoLocation>> bridgesMap;
 
     public WaterGraphEstimation(Map<WaterArea, SimpleWeightedGraph<GeoLocation, Edge>> waterGraphs,
                                 Set<WaterArea> splitSimpleWaterAreas, Map<WaterArea, Set<LineString>> waterGraphEdges,
                                 AirlineDistance metric, boolean circuity, Map<WaterArea, Set<GeoLocation>> bridgesMap,
-                                RTree<WaterArea, com.github.davidmoten.rtree.geometry.Geometry> waterAreaTree) {
+                                RTree<WaterArea, com.github.davidmoten.rtree.geometry.Geometry> waterAreaTree,
+                                Map<WaterArea, STRtree> spatialIndicesWaterGraphs) {
         super(null, new ArrayList<>(splitSimpleWaterAreas), waterAreaTree, metric);
         this.circuity = circuity;
         this.waterGraphs = waterGraphs;
         this.waterGraphEdges = waterGraphEdges;
         this.bridgesMap = bridgesMap;
+        this.spatialIndicesWaterGraphs = spatialIndicesWaterGraphs;
     }
 
     public WaterGraphEstimation(WaterGraphPreprocessing waterGraphPreprocessing, AirlineDistance metric, boolean circuity) {
@@ -41,23 +50,18 @@ public class WaterGraphEstimation extends DirectLineEstimation {
         this.waterGraphs = waterGraphPreprocessing.getWaterGraphs();
         this.waterGraphEdges = waterGraphPreprocessing.getWaterGraphEdges();
         this.bridgesMap = waterGraphPreprocessing.getNewBridges();
+        this.spatialIndicesWaterGraphs = waterGraphPreprocessing.getSpatialIndicesWaterGraphs();
     }
 
     @Override
     public DistanceEstimate estimateDistance(GeoLocation start, GeoLocation dest) {
         Debug.startDebugTimer();
 
-        if (start.compareTo(dest) < 0) {
-            var tmp = start;
-            start = dest;
-            dest = tmp;
-        }
-
         DirectLine directLine = new DirectLine(start, dest);
-        Map<LineString, WaterArea> intersectionWaterAreasMap = getIntersections(directLine, false);
+        List<Pair<LineString, WaterArea>> intersections = getIntersections(directLine, false);
         Debug.stopDebugTimer("Get all intersections of Start-Dest-Line with Water Areas");
         Debug.startDebugTimer();
-        List<Map.Entry<LineString, Double>> intersectionsSortedByDistanceList = sortIntersectionsByDistance(directLine, intersectionWaterAreasMap);
+        List<Pair<LineString, WaterArea>> intersectionsSortedByDistanceList = sortIntersectionsByDistance(directLine, intersections);
         Debug.stopDebugTimer("Get Distance of Start to Intersections in sorted List");
 
         if (intersectionsSortedByDistanceList.isEmpty()) {
@@ -77,10 +81,11 @@ public class WaterGraphEstimation extends DirectLineEstimation {
         WaterArea lastWater = null;
         boolean hasMultipleIntersections = false;
         for (int i = 0; i < intersectionsSortedByDistanceList.size(); i++) {
-            LineString intersection = intersectionsSortedByDistanceList.get(i).getKey();
+            Pair<LineString, WaterArea> entry = intersectionsSortedByDistanceList.get(i);
+            LineString intersection = entry.getLeft();
             GeoLocation intersectionStart = new GeoLocation(intersection.getStartPoint().getCoordinate());
             GeoLocation intersectionEnd = new GeoLocation(intersection.getEndPoint().getCoordinate());
-            WaterArea w = intersectionWaterAreasMap.get(intersection);
+            WaterArea w = entry.getRight();
 
 
             if (Debug.DEBUG){
@@ -184,89 +189,59 @@ public class WaterGraphEstimation extends DirectLineEstimation {
 
 
     private GeoLocation getNearestCoordinateOfEdge(LineString edge, Coordinate other) {
-        Point otherPoint = Factory.coordinateToPoint(other);
-        if (edge.getStartPoint().distance(otherPoint) > edge.getEndPoint().distance(otherPoint)) {
-            return new GeoLocation(edge.getEndPoint().getCoordinate());
-        } else {
-            return new GeoLocation(edge.getStartPoint().getCoordinate());
-        }
+        Coordinate start = edge.getCoordinateN(0);
+        Coordinate end = edge.getCoordinateN(edge.getNumPoints() - 1);
+
+        double dxStart = start.x - other.x;
+        double dyStart = start.y - other.y;
+        double distSqStart = dxStart * dxStart + dyStart * dyStart;
+
+        double dxEnd = end.x - other.x;
+        double dyEnd = end.y - other.y;
+        double distSqEnd = dxEnd * dxEnd + dyEnd * dyEnd;
+
+        return new GeoLocation(distSqStart > distSqEnd ? end : start);
     }
 
     private GeoLocation[] findClosestVertices(WaterArea waterArea, GeoLocation intersectionStart,
                                               GeoLocation intersectionEnd, GeoLocation lastEnd) {
-        AtomicReference<LineString> nearestToStart = new AtomicReference<>();
-        AtomicReference<LineString> nearestToEnd = new AtomicReference<>();
-        AtomicReference<LineString> nearestToLastEnd = new AtomicReference<>();
-
-        final double[] minDistanceToStart = { Double.MAX_VALUE };
-        final double[] minDistanceToEnd = { Double.MAX_VALUE };
-        final double[] minDistanceToLastEnd = { Double.MAX_VALUE };
+        STRtree index = spatialIndicesWaterGraphs.get(waterArea);
         Geometry intersectionStartGeometry = Factory.coordinateToPoint(intersectionStart);
         Geometry intersectionEndGeometry = Factory.coordinateToPoint(intersectionEnd);
         Geometry lastEndGeometry = Factory.coordinateToPoint(lastEnd);
-        final Object[] lock = { new Object(), new Object(), new Object() };
 
-        var stream = waterGraphEdges.get(waterArea).stream();
+        // STRtree.nearestNeighbor uses a Branch-and-Bound algorithm to find the
+        // nearest item in O(log N) time instead of O(N).
+        LineString nearestToStart = (LineString) index.nearestNeighbour(
+                intersectionStartGeometry.getEnvelopeInternal(), // Search using the point's envelope
+                intersectionStartGeometry,
+                new GeometryItemDistance() // JTS class to calculate distance between items
+        );
 
-        // only make use of parallelization if water graph is big enough
-        if (waterGraphEdges.size() > 3000) {
-            stream = stream.parallel();
-        }
+        LineString nearestToEnd = (LineString) index.nearestNeighbour(
+                intersectionEndGeometry.getEnvelopeInternal(),
+                intersectionEndGeometry,
+                new GeometryItemDistance()
+        );
 
-        stream.forEach(edge -> {
-            double distanceToStart = edge.distance(intersectionStartGeometry);
-            double distanceToEnd = edge.distance(intersectionEndGeometry);
-            double distanceToLastEnd = edge.distance(lastEndGeometry);
+        LineString nearestToLastEnd = (LineString) index.nearestNeighbour(
+                lastEndGeometry.getEnvelopeInternal(),
+                lastEndGeometry,
+                new GeometryItemDistance()
+        );
 
-            // idea here is to only acquire the lock if there is an actual chance of a lower value. We need to check the
-            // condition again because, in theory, the value could have been set in the meantime by another thread!
-            if (distanceToStart < minDistanceToStart[0]) {
-                synchronized (lock[0]){
-                    if (distanceToStart < minDistanceToStart[0]) {
-                        minDistanceToStart[0] = distanceToStart;
-                        nearestToStart.set(edge);
-                    }
-                }
-            }
-
-            if (distanceToEnd < minDistanceToEnd[0]) {
-                synchronized (lock[1]){
-                    if (distanceToEnd < minDistanceToEnd[0]) {
-                        minDistanceToEnd[0] = distanceToEnd;
-                        nearestToEnd.set(edge);
-                    }
-                }
-            }
-
-            if (distanceToLastEnd < minDistanceToLastEnd[0]) {
-                synchronized (lock[2]){
-                    if (distanceToLastEnd < minDistanceToLastEnd[0]) {
-                        minDistanceToLastEnd[0] = distanceToLastEnd;
-                        nearestToLastEnd.set(edge);
-                    }
-                }
-            }
-        });
-
-        GeoLocation vertexNearestToStart = new GeoLocation(getNearestCoordinateOfEdge(nearestToStart.get(), intersectionStart));
-        GeoLocation vertexNearestToEnd = new GeoLocation(getNearestCoordinateOfEdge(nearestToEnd.get(), intersectionEnd));
-        GeoLocation vertexNearestToLastEnd = new GeoLocation(getNearestCoordinateOfEdge(nearestToLastEnd.get(), lastEnd));
-
-        return new GeoLocation[]{vertexNearestToStart, vertexNearestToEnd, vertexNearestToLastEnd};
+        return new GeoLocation[]{
+                new GeoLocation(getNearestCoordinateOfEdge(nearestToStart, intersectionStart)),
+                new GeoLocation(getNearestCoordinateOfEdge(nearestToEnd, intersectionEnd)),
+                new GeoLocation(getNearestCoordinateOfEdge(nearestToLastEnd, lastEnd))
+        };
     }
 
-
     public boolean crossesWater(GeoLocation start, GeoLocation dest){
-        if (start.compareTo(dest) < 0) {
-            var tmp = start;
-            start = dest;
-            dest = tmp;
-        }
-
         DirectLine directLine = new DirectLine(start, dest);
-        Map<LineString, WaterArea> intersectionWaterAreasMap = getIntersections(directLine, false);
+        List<Pair<LineString, WaterArea>> intersections = getIntersections(directLine, false);
 
-        return !intersectionWaterAreasMap.isEmpty();
+        return !intersections.isEmpty();
     }
 
     private void addEdgeWithWeight(SimpleWeightedGraph<GeoLocation, Edge> combined, GeoLocation a, GeoLocation b) {
@@ -275,17 +250,17 @@ public class WaterGraphEstimation extends DirectLineEstimation {
     }
 
     private void addEdgeWithWeight(SimpleWeightedGraph<GeoLocation, Edge> combined, GeoLocation a, GeoLocation b, DistanceEstimate weight) {
+        // avoid self-loops
+        if (a.equals(b)) return;
+
         combined.addVertex(a);
         combined.addVertex(b);
-        if (!a.equals(b) && !combined.containsEdge(a, b) && !combined.containsEdge(b, a)) {
-            try {
-                combined.addEdge(a, b);
-            } catch (Exception e) {
-                Debug.message(a + " " + b);
-                Debug.message("");
-            }
 
-            combined.setEdgeWeight(a, b, weight.getMeters());
+        // No need to check if edge is already in graph, as e is null if this is the case!
+        Edge e = combined.addEdge(a, b);
+
+        if (e != null) {
+            combined.setEdgeWeight(e, weight.getMeters());
         }
     }
 
@@ -319,7 +294,7 @@ public class WaterGraphEstimation extends DirectLineEstimation {
     @Override
     public LineString getPath(GeoLocation start, GeoLocation dest) {
         if (lastGraphPath == null) {
-            return Factory.FACTORY.createLineString();
+            return Factory.FACTORY.createLineString(new Coordinate[]{start, dest});
         }
         return Factory.FACTORY.createLineString(lastGraphPath.getVertexList().toArray(new Coordinate[0]));
     }
@@ -337,7 +312,7 @@ public class WaterGraphEstimation extends DirectLineEstimation {
     @Override
     public DistanceEstimation copyApproach() {
         return new WaterGraphEstimation(waterGraphs, new HashSet<>(waterAreas), waterGraphEdges, metric, circuity,
-                bridgesMap, waterAreaTree);
+                bridgesMap, waterAreaTree, spatialIndicesWaterGraphs);
     }
 
     @Override

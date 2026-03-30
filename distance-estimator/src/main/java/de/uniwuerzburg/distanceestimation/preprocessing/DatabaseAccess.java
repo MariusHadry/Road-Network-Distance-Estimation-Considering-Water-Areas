@@ -5,6 +5,7 @@ import de.uniwuerzburg.distanceestimation.models.Factory;
 import de.uniwuerzburg.distanceestimation.models.GeoLocation;
 import de.uniwuerzburg.distanceestimation.models.mapInfo.Street;
 import de.uniwuerzburg.distanceestimation.models.mapInfo.WaterArea;
+import io.github.cdimascio.dotenv.Dotenv;
 import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.geom.MultiLineString;
 import org.locationtech.jts.io.ParseException;
@@ -14,9 +15,9 @@ import java.sql.*;
 import java.util.*;
 
 public class DatabaseAccess {
-    private static final String host = "jdbc:postgresql://127.0.0.1:5432/osm";
-    private static final String password = "iWcuUThpbYdmoGRdDFw3UTww4MnU7unb";
-    private static final String user = "admin";
+    private static final String host = Dotenv.load().get("POSTGIS_CONNECTION");
+    private static final String password = Dotenv.load().get("POSTGIS_PASSWORD");
+    private static final String user = Dotenv.load().get("POSTGIS_USER");
 
     private final Connection conn;
 
@@ -58,13 +59,19 @@ public class DatabaseAccess {
     public Set<WaterArea> getWaterAreasFromDBBridgeRoute() {
         HashSet<WaterArea> result = new HashSet<>();
         try {
-            // Here we would use the lines instead of the polygons.
-            // approx takes 120sec in preprocessing locally and results in ~199 (No Split) or 1461 (Split) Water areas
             PreparedStatement st = conn.prepareStatement(
                     """
-                        SELECT name, ST_AsEWKB(ST_Buffer(ST_Transform(ST_LineExtend(way, 100, 100), 4326), 0.00005)) as wkb
-                        FROM planet_osm_line
-                        WHERE (route = 'waterway' OR waterway='river') and name is not null
+                        WITH clustered_geoms AS (
+                            SELECT name,
+                                ST_ClusterDBSCAN(ST_Transform(ST_LineExtend(way, 100, 100), 4326), eps => 0.0005,minpoints => 1) OVER() AS cluster_id,
+                                ST_Transform(ST_LineExtend(way, 100, 100), 4326) as geom
+                            FROM planet_osm_line
+                            WHERE (route = 'waterway' OR waterway = 'river') AND name IS NOT NULL
+                        )
+                        SELECT Min(name) as name,
+                            ST_AsEWKB(ST_Buffer(ST_Union(geom), 0.00005)) as wkb
+                        FROM clustered_geoms
+                        GROUP BY cluster_id;
                     """
             );
             var fetchResult = st.executeQuery();
