@@ -73,6 +73,7 @@ class DistanceEstimationApproach(Enum):
     OVERHEAD_GRAPH_512 = "OVERHEAD_GRAPH_512"
     OVERHEAD_GRAPH_1024 = "OVERHEAD_GRAPH_1024"
     OSRM = "OSRM"
+    OSRM_CH = "OSRM_CH"
 
     @staticmethod
     def get_estimation_approaches():
@@ -90,7 +91,7 @@ class DistanceEstimationApproach(Enum):
 
      # check if approach is within distance estimation tool or not
     def is_distance_estimation(self) -> bool:
-        return not self.value in {DistanceEstimationApproach.OSRM.value}
+        return not self.value in {DistanceEstimationApproach.OSRM.value, DistanceEstimationApproach.OSRM_CH.value}
 
 
 
@@ -203,6 +204,70 @@ class OSRM:
             'exclude': 'ferry'
         }
         return OSRM.BASE_URL + "route/v1/driving/" + f"{start_location.lon},{start_location.lat};{dest_location.lon},{dest_location.lat}?" + urlencode(params)
+
+class OSRM_CH:
+    BASE_URL: str = 'http://127.0.0.1:5001/'
+
+    @staticmethod
+    def get_distance_nearest_road(location: Location):
+        response = requests.get(OSRM_CH._build_url_nearest_road(location))
+        _json = response.json()
+        return _json['waypoints'][0]['distance'], _json['waypoints'][0]['location']
+
+    @staticmethod
+    def get_snapped_location(location: Location):
+        _ref_location = Location(lat=49.793094, lon=9.936605)
+        _response = OSRM_CH.get_distance_response(location, _ref_location)
+
+        if 'waypoints' not in _response or 'location' not in _response['waypoints'][0]:
+            return None
+
+        return _response['waypoints'][0]['location']
+
+    @staticmethod
+    def _build_url_nearest_road(location: Location):
+        return OSRM_CH.BASE_URL + "nearest/v1/driving/" + f"{location.lon},{location.lat}"
+
+    @staticmethod
+    def overhead_query():
+        params = {
+            'steps': 'false',
+            'alternatives': 'false',
+            'overview': 'false',
+            'exclude': 'ferry'
+        }
+        api_url = OSRM_CH.BASE_URL + "route/v1/driving/" + f"9.974192,49.782036?" + urlencode(params)
+
+        try:
+            response = requests.get(api_url)
+            return response.json()
+        except Exception:
+            time.sleep(0.05)
+            return None
+
+    @staticmethod
+    def get_distance_response(start_location: Location, dest_location: Location):
+        api_url = OSRM_CH._build_url_distance(start_location, dest_location)
+        response = requests.get(api_url)
+        return response.json()
+
+    @staticmethod
+    def get_distance_only(start_location: Location, dest_location: Location):
+        api_url = OSRM_CH._build_url_distance(start_location, dest_location)
+        response = requests.get(api_url).json()
+        if 'routes' in response:
+            return response['routes'][0]['legs'][0]['distance']
+        return -1
+
+    @staticmethod
+    def _build_url_distance(start_location: Location, dest_location: Location) -> str:
+        params = {
+            'steps': 'false',
+            'alternatives': 'false',
+            'overview': 'false',
+            'exclude': 'ferry'
+        }
+        return OSRM_CH.BASE_URL + "route/v1/driving/" + f"{start_location.lon},{start_location.lat};{dest_location.lon},{dest_location.lat}?" + urlencode(params)
 
 
 class DistanceEstimation:
@@ -336,14 +401,20 @@ if __name__ == '__main__':
     # dest = Location.from_string("Location[49.521706,10.000346]")
     # start = Location.from_string("Location[49.516614,10.012478]")
 
-    # Location[49.699016,10.14132]	Location[49.697135,10.141423]
-    start = Location.from_string("Location[49.699016, 10.14132]")
-    dest = Location.from_string("Location[49.697135, 10.141423]")
+    # Example where our approach works good, illustrating the problem
+    start = Location.from_string("Location[49.862193,9.851564]")
+    dest = Location.from_string("Location[49.857329,9.845563]")
 
 
     response = DistanceEstimation.get_path(start, dest, DistanceEstimationApproach.BRIDGE_SPLIT_NO_REC)
     dist_bs = response['distanceMeters']
     print(f"Bridge Split no rec (dist={dist_bs}):\n---")
+    geo_json = estimation_path_to_geoJSON(response['path'])
+    print(json.dumps(geo_json))
+
+    response = DistanceEstimation.get_path(start, dest, DistanceEstimationApproach.HAVERSINE)
+    dist_bs = response['distanceMeters']
+    print(f"GCD (dist={dist_bs}):\n---")
     geo_json = estimation_path_to_geoJSON(response['path'])
     print(json.dumps(geo_json))
 

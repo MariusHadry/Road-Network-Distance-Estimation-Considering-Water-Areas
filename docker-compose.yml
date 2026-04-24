@@ -4,7 +4,7 @@ services:
   postgres:
     image: postgis/postgis:15-3.4-alpine
     ports:
-      - 5432:5432
+      - 127.0.0.1:5432:5432
     volumes:
       - /apps/postgres/data:/var/lib/postgresql/data
     environment:
@@ -17,7 +17,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 15
-
+  
   osm2pgsql:
     depends_on:
       postgres:
@@ -28,16 +28,26 @@ services:
     command: osm2pgsql -U admin -d osm -P 5432 -H postgres /osm_files/Unterfranken_25-01-2025.osm.pbf
     volumes:
       - /root/mapdata:/osm_files
-
+      
   custom-osrm-service:
     image: custom-osrm
     stdin_open: true # docker run -i
     tty: true        # docker run -t
     ports:
-        - 127.0.0.1:5000:5000
+        - 0.0.0.0:5000:5000
     volumes:
       - /root/osrm_data/:/data
     command: osrm-routed --algorithm mld /data/Unterfranken_25-01-2025.osrm --verbosity WARNING
+
+  custom-osrm-service-ch:
+    image: custom-osrm
+    stdin_open: true # docker run -i
+    tty: true        # docker run -t
+    ports:
+        - 0.0.0.0:5001:5000
+    volumes:
+      - /root/osrm_data_ch/:/data
+    command: osrm-routed --algorithm ch /data/Unterfranken_25-01-2025.osrm --verbosity WARNING
 
   distance-estimator:
     image: distance-estimation

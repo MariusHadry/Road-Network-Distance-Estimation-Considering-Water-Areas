@@ -11,12 +11,12 @@ from scipy import stats
 from tqdm import tqdm
 
 from generate_random_coordinate_pairs import get_random_location_pairs
-from util import DistanceEstimation, OSRM, DistanceEstimationApproach, HERE, Location
-
+from util import DistanceEstimation, OSRM, DistanceEstimationApproach, HERE, Location, OSRM_CH
 
 # important subset
 approaches_to_evaluate = [DistanceEstimationApproach.HAVERSINE,
                       DistanceEstimationApproach.OSRM,
+                      DistanceEstimationApproach.OSRM_CH,
                       DistanceEstimationApproach.HYBRID_BRIDGE_SPLIT_HAVERSINE,
                       DistanceEstimationApproach.HYBRID_BRIDGE_SPLIT_OHG,
                       DistanceEstimationApproach.BRIDGE_SPLIT_REC,
@@ -31,6 +31,7 @@ approaches_to_evaluate = [DistanceEstimationApproach.HAVERSINE,
 # all approaches
 # approaches_to_evaluate = [DistanceEstimationApproach.HAVERSINE,
 #                       DistanceEstimationApproach.OSRM,
+#                       DistanceEstimationApproach.OSRM_CH,
 #                       DistanceEstimationApproach.WATER_GRAPH_CIRCUITY,
 #                       DistanceEstimationApproach.HYBRID_BRIDGE_SPLIT_HAVERSINE,
 #                       DistanceEstimationApproach.HYBRID_BRIDGE_SPLIT_OHG,
@@ -117,6 +118,8 @@ def execute_run(run_list: list[SingleRun]):
             query_results = DistanceEstimation.get_distance(run.start_location, run.dest_location, run.approach)
         elif run.approach == DistanceEstimationApproach.OSRM:
             query_results = OSRM.get_distance_response(run.start_location, run.dest_location)
+        elif run.approach == DistanceEstimationApproach.OSRM_CH:
+            query_results = OSRM_CH.get_distance_response(run.start_location, run.dest_location)
         else:
             raise NotImplementedError()
 
